@@ -2,6 +2,7 @@
 # Load data
 from math import exp
 from re import S
+from typing_extensions import Annotated
 
 from numpy.core.numeric import full
 import tools as tl
@@ -13,6 +14,7 @@ from scipy import stats
 import os
 import seaborn as sns
 import benchmark_func as bf
+import pingouin
 
 sns.set(context="paper", font_scale=1, palette="husl", style="ticks",
         rc={'text.usetex': True, 'font.family': 'serif', 'font.size': 12,
@@ -77,9 +79,28 @@ basic_mhs_cadinality = [1 if isinstance(x, tuple) else len(x) for x in basic_mhs
 
 dimensions = [2, 10, 30, 50]
 
+def sort_dict(dataset):
+    problems = dataset['problem']
+    dimensions = dataset['dimensions']
+    results = dataset['results']
+    list_pair_prob_dim = list(zip(problems, dimensions, results))
+    list_pair_prob_dim.sort()
+    prob_sorted = []
+    dim_sorted = []
+    res_sorted = []
+    for a, b, c in list_pair_prob_dim:
+        prob_sorted.append(a)
+        dim_sorted.append(b)
+        res_sorted.append(c)
+    dataset['problem'] = prob_sorted
+    dataset['dimensions'] = dim_sorted
+    dataset['results'] = res_sorted
+
 def filter_by_dimensions(dataset):
     allowed_dim_inds = [index for d in dimensions for index in tl.listfind(dataset['dimensions'], d)]
-    return {key: [val[x] for x in allowed_dim_inds] for key, val in dataset.items()}
+    dict_filtered = {key: [val[x] for x in allowed_dim_inds] for key, val in dataset.items()}
+    sort_dict(dict_filtered)
+    return dict_filtered
 
 
 # Load data from basic metaheuristics
@@ -210,7 +231,7 @@ batch_5 = [] # TBD
 # consider_experiments = list(collection_experiments.keys())
 
 # Indicates which experiments
-consider_experiments = batch_1
+consider_experiments = batch_2
  
 # Read the data file and assign the variables
 data_files = dict({experiment: collection_experiments[experiment] for experiment in consider_experiments})
@@ -361,6 +382,7 @@ for mh, _, selector in heuristic_space:
     selector_so.append(selector.replace('_', '\_'))
 DF = pd.DataFrame({'Metaheuristic': mh_so, 'Selector': selector_so})
 
+
 sns.set(font_scale = 1.8)
 fig, ax = plt.subplots(figsize=(12,6))
 so_dist = sns.countplot(data=DF, x='Metaheuristic', hue='Selector', ax=ax, palette='tab10')
@@ -369,7 +391,9 @@ plt.setp(labels, rotation=45)
 so_dist.set_xlabel(r'Basic metaheuristic search operators')
 so_dist.set_ylabel(r'Number of search operators')
 sns.set()
-
+sns.set(context="paper", font_scale=1, palette="husl", style="ticks",
+        rc={'text.usetex': True, 'font.family': 'serif', 'font.size': 12,
+            "xtick.major.top": False, "ytick.major.right": False})
 
 
 
@@ -452,13 +476,121 @@ for id in ids:
     ids_dict['Unfolded MH pop30'] = list(table_bydim_uMH30[table_bydim_uMH30['Id'] == id]['successRateUMH30'])
     df = pd.DataFrame(ids_dict, index=dims)
     sns.heatmap(df, vmin=0, vmax=1, annot=True,  cmap="YlGnBu")
+    plt.title(f'Comparison for {id}')
     plt.show()
 
 
 
-# %% Fourth Plot // Wilcoxin test
 
 
+# %% Fourth Plot // Wilcoxon test
+
+dict_basicMH_perf = dict()
+for i in basic_mhs_data['results'][0]['operator_id']:
+    dict_basicMH_perf[i] = []
+    
+for x in basic_mhs_data['results']:
+    for i, y in zip(x['operator_id'], x['performance']):
+        dict_basicMH_perf[i].append(y)
+
+for id in ids:
+    performance_id = list(data_tables[id]['Performance'])
+    results_stats = []
+    for x in dict_basicMH_perf:
+        _, p = stats.wilcoxon(performance_id, dict_basicMH_perf[x], alternative='less')
+        results_stats.append(p)
+    fig, ax = plt.subplots()
+    #ax.set(yscale='log')
+    #results_stats = [1, 2, 3]
+    df = pd.DataFrame({'Basic MH': list(range(len(results_stats))), 'p-value': results_stats })
+    #ax.bar(df['Basic MH'], df['p-value'], color='blue')
+    #plt.legend()
+    barplottt = sns.barplot(x=df['Basic MH'], y=df['p-value'], palette='tab10')
+    ax.axhline(y=0.05, color='black', linestyle='--')
+    barplottt.set_yscale('linear')
+    barplottt.set(xticks=[])
+    ax.set_xlabel('Basic metaheuristics')
+    ax.set_ylabel('$p$-value')
+    ax.set_title(f"Wilcoxon test ({id})")
+    plt.show()
+    
+    
+    fig, ax = plt.subplots()
+    barplottt = sns.barplot(x=df['Basic MH'], y=df['p-value'], palette='tab10')
+    ax.axhline(y=0.05, color='black', linestyle='--')
+    barplottt.set_yscale('log')
+    barplottt.set(xticks=[])
+    ax.set_xlabel('Basic metaheuristics')
+    ax.set_ylabel('$p$-value')
+    ax.set_title(f"Wilcoxon test ({id})")
+    plt.show()
+    
+# %% Wilcoxon against uMH30
+for id in ids:
+    if id == 'unfolded\_mh\_pop30':
+        continue
+    performance_id = list(data_tables[id]['Performance'])
+    performance_UMH30 = list(unfolded_performance_pop30)
+    w, p = stats.wilcoxon(performance_id, performance_UMH30, alternative='less')
+    print(w, p)
+
+# %% Wilcoxon between ids
+fig, ax = plt.subplots()
+dict_comparison = dict()
+for id in ids:
+    performance_id = list(data_tables[id]['Performance'])    
+    dict_comparison[id] = []
+    for id2 in ids:
+        performance_id2 = list(data_tables[id2]['Performance'])
+        if id == id2:
+            p = 0
+        else:
+            w, p = stats.wilcoxon(performance_id, performance_id2)#, alternative='less')
+        dict_comparison[id].append(p)
+
+df_comparison = pd.DataFrame(dict_comparison, index=ids)
+sns.heatmap(df_comparison, vmin=0, vmax=1, annot=True,  cmap="Reds")
+ax.set_title('Alternative: two-sided')
+ax.set_xlabel('Right')
+ax.set_ylabel('Left')
+
+fig, ax = plt.subplots()
+dict_comparison = dict()
+for id in ids:
+    performance_id = list(data_tables[id]['Performance'])    
+    dict_comparison[id] = []
+    for id2 in ids:
+        performance_id2 = list(data_tables[id2]['Performance'])
+        if id == id2:
+            p = 0
+        else:
+            w, p = stats.wilcoxon(performance_id, performance_id2, alternative='less')
+        dict_comparison[id].append(p)
+
+df_comparison = pd.DataFrame(dict_comparison, index=ids)
+sns.heatmap(df_comparison, vmin=0, vmax=1, annot=True,  cmap="Blues")
+ax.set_title('Alternative: less')
+ax.set_xlabel('Right')
+ax.set_ylabel('Left')
+
+fig, ax = plt.subplots()
+dict_comparison = dict()
+for id in ids:
+    performance_id = list(data_tables[id]['Performance'])    
+    dict_comparison[id] = []
+    for id2 in ids:
+        performance_id2 = list(data_tables[id2]['Performance'])
+        if id == id2:
+            p = 0
+        else:
+            w, p = stats.wilcoxon(performance_id, performance_id2, alternative='greater')
+        dict_comparison[id].append(p)
+
+df_comparison = pd.DataFrame(dict_comparison, index=ids)
+sns.heatmap(df_comparison, vmin=0, vmax=1, annot=True,  cmap="Greens")
+ax.set_title('Alternative: greater')
+ax.set_xlabel('Right')
+ax.set_ylabel('Left')
 
 
 # %% Fifth Plot? // Cardinality comparison
@@ -507,3 +639,23 @@ if is_saving:
     p_5_so.savefig(folder_name + results_file_name + '_' + 'Unique_vs_Dim_Id-KDE.' + saving_format, format=saving_format, dpi=333, transparent=True)
 
 plt.show()
+
+# %% p-Value per Dim and Cat
+
+
+def plot_pvalue_boxplot(data_table, id):
+    fig = plt.figure(figsize=(5, 2.5))
+    sns.boxplot(data=data_table, x='Dim', y='pValue', hue='Cat', hue_order=categories)
+    plt.hlines(0.05, -0.5, len(dimensions)-0.5)
+    plt.ylabel(r'$p$-Value')
+    plt.title(r'Id = {}'.format(id))
+    plt.show()
+
+    if is_saving:
+        id_file = ''.join(c for c in id if c not in '\\')
+        fig.savefig(folder_name + results_file_name + '_' + 'pValue-id_{}-CatDim-BoxPlot.'.format(id_file) + saving_format,
+                    format=saving_format, dpi=333, transparent=True)
+
+
+for pop, data_table in data_tables.items():
+    plot_pvalue_boxplot(data_table, pop)
